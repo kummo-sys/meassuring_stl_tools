@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Medidor STL</title>
+<style>
+:root{--bg:#f4f5f7;--panel:#fff;--fg:#1c1f24;--mut:#6b7280;--bd:#dfe2e7;--a:#2f7de1;--b:#f08a24;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15171b;--panel:#1f2228;--fg:#e8eaed;--mut:#9aa0aa;--bd:#333842}}
+:root[data-theme="dark"]{--bg:#15171b;--panel:#1f2228;--fg:#e8eaed;--mut:#9aa0aa;--bd:#333842}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column}
+header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;background:var(--panel);border-bottom:1px solid var(--bd)}
+h1{font-size:15px;margin:0 8px 0 0}
+button,label.btn{background:var(--a);color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer;font:inherit}
+button.sec{background:transparent;color:var(--fg);border:1px solid var(--bd)}
+main{flex:1;position:relative;min-height:0}
+#c{position:absolute;inset:0;width:100%;height:100%;display:block}
+#hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--mut);pointer-events:none;padding:20px}
+#panel{position:absolute;left:10px;bottom:10px;max-width:min(340px,calc(100% - 20px));background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:10px 12px;box-shadow:0 2px 10px #0002}
+#panel .r{display:flex;justify-content:space-between;gap:16px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+#dist{font-size:22px;font-weight:600;margin:4px 0}
+.mut{color:var(--mut);font-size:12px}
+#leg{position:absolute;right:10px;top:10px;max-width:230px;background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:6px 10px;font-size:12px;box-shadow:0 2px 10px #0002}
+#leg summary{cursor:pointer;font-weight:600;list-style:none}
+#leg summary::-webkit-details-marker{display:none}
+#leg .k{display:flex;justify-content:space-between;gap:10px;margin-top:4px}
+#leg .k span:last-child{color:var(--mut);text-align:right}
+#leg hr{border:0;border-top:1px solid var(--bd);margin:6px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Medidor STL</h1>
+  <label class="btn">Abrir STL<input id="f" type="file" accept=".stl" hidden></label>
+  <button class="sec" id="demo">Ejemplo</button>
+  <button class="sec" id="clr">Limpiar selección</button>
+</header>
+<main>
+  <canvas id="c"></canvas>
+  <div id="hint">Arrastra un archivo .STL aquí o pulsa «Abrir STL».<br>Haz clic en una cara plana y luego en otra para medir la distancia.</div>
+  <details id="leg" open>
+    <summary>Controles de cámara ▾</summary>
+    <div class="k"><span>Botón izq. + arrastrar</span><span>Girar</span></div>
+    <div class="k"><span>Botón der. + arrastrar</span><span>Mover</span></div>
+    <div class="k"><span>Rueda</span><span>Zoom</span></div>
+    <hr>
+    <div class="k"><span>1 dedo</span><span>Girar</span></div>
+    <div class="k"><span>2 dedos</span><span>Zoom y mover</span></div>
+    <hr>
+    <div class="k"><span>Clic / toque sin arrastrar</span><span>Seleccionar cara</span></div>
+  </details>
+  <div id="panel">
+    <div class="r"><span><i class="dot" style="background:var(--a)"></i>Cara A</span><span id="ia">—</span></div>
+    <div class="r"><span><i class="dot" style="background:var(--b)"></i>Cara B</span><span id="ib">—</span></div>
+    <div id="dist">—</div>
+    <div class="r"><span>Ángulo entre caras</span><b id="ang">—</b></div>
+    <div id="ex" class="mut">Selecciona dos caras planas (unidades del archivo, normalmente mm).</div>
+  </div>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const canvas=$('c');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(45,1,0.1,10000);
+camera.up.set(0,0,1);
+const controls=new THREE.OrbitControls(camera,canvas);
+controls.enableDamping=true;
+scene.add(new THREE.HemisphereLight(0xffffff,0x555566,0.9));
+const dl=new THREE.DirectionalLight(0xffffff,0.6);dl.position.set(1,-2,3);scene.add(dl);
+
+let mesh=null,pos=null,tn=null,tv=null,edges=null,sel=[],overlays=[],lineObj=null;
+const COL=[0x2f7de1,0xf08a24];
+
+function resize(){const m=canvas.parentElement;renderer.setSize(m.clientWidth,m.clientHeight,false);camera.aspect=m.clientWidth/m.clientHeight;camera.updateProjectionMatrix()}
+addEventListener('resize',resize);resize();
+(function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera)})();
+
+function parseSTL(buf){
+  const dv=new DataView(buf);const n=dv.getUint32(80,true);
+  if(84+n*50===buf.byteLength){
+    const p=new Float32Array(n*9);
+    for(let i=0;i<n;i++){let o=84+i*50+12;for(let k=0;k<9;k++,o+=4)p[i*9+k]=dv.getFloat32(o,true)}
+    return p;
+  }
+  const t=new TextDecoder().decode(buf);const out=[];
+  const re=/vertex\s+(\S+)\s+(\S+)\s+(\S+)/g;let m;
+  while((m=re.exec(t)))out.push(+m[1],+m[2],+m[3]);
+  return new Float32Array(out);
+}
+
+function load(buf){
+  let p;try{p=parseSTL(buf)}catch(e){p=new Float32Array(0)}
+  if(p.length<9){alert('No se pudo leer el STL.');return}
+  clearAll();
+  if(mesh){scene.remove(mesh);mesh.geometry.dispose()}
+  const box=new THREE.Box3();const v=new THREE.Vector3();
+  for(let i=0;i<p.length;i+=3)box.expandByPoint(v.set(p[i],p[i+1],p[i+2]));
+  const c=box.getCenter(new THREE.Vector3());
+  for(let i=0;i<p.length;i+=3){p[i]-=c.x;p[i+1]-=c.y;p[i+2]-=c.z}
+  pos=p;const nt=p.length/9;
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(p,3));g.computeVertexNormals();
+  mesh=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:0xb8bfc9,metalness:0.1,roughness:0.6,side:THREE.DoubleSide}));
+  scene.add(mesh);
+  // normales por triángulo y adyacencia por aristas
+  tn=new Float32Array(nt*3);const vid=new Map();tv=new Int32Array(nt*3);
+  const a=new THREE.Vector3(),b=new THREE.Vector3(),d=new THREE.Vector3(),nn=new THREE.Vector3();
+  for(let t=0;t<nt;t++){
+    for(let k=0;k<3;k++){
+      const o=t*9+k*3;const key=Math.round(p[o]*1000)+','+Math.round(p[o+1]*1000)+','+Math.round(p[o+2]*1000);
+      let id=vid.get(key);if(id===undefined){id=vid.size;vid.set(key,id)}tv[t*3+k]=id;
+    }
+    a.fromArray(p,t*9);b.fromArray(p,t*9+3);d.fromArray(p,t*9+6);
+    nn.crossVectors(b.sub(a),d.sub(a)).normalize();nn.toArray(tn,t*3);
+  }
+  edges=new Map();
+  for(let t=0;t<nt;t++)for(let k=0;k<3;k++){
+    const u=tv[t*3+k],w=tv[t*3+(k+1)%3];const key=u<w?u*4294967296+w:w*4294967296+u;
+    const l=edges.get(key);l?l.push(t):edges.set(key,[t]);
+  }
+  const r=box.getSize(new THREE.Vector3()).length()/2;
+  camera.near=r/1000;camera.far=r*100;camera.updateProjectionMatrix();
+  camera.position.set(r*1.2,-r*1.8,r*1.1);controls.target.set(0,0,0);controls.update();
+  $('hint').style.display='none';
+}
+
+function face(seed){
+  const seedN=new THREE.Vector3().fromArray(tn,seed*3);
+  const seen=new Set([seed]);const st=[seed];const nv=new THREE.Vector3();
+  while(st.length){
+    const t=st.pop();
+    for(let k=0;k<3;k++){
+      const u=tv[t*3+k],w=tv[t*3+(k+1)%3];const key=u<w?u*4294967296+w:w*4294967296+u;
+      for(const q of edges.get(key)){
+        if(seen.has(q))continue;
+        if(nv.fromArray(tn,q*3).dot(seedN)>0.9995){seen.add(q);st.push(q)}
+      }
+    }
+  }
+  const tris=[...seen];const cen=new THREE.Vector3();let area=0;
+  const a=new THREE.Vector3(),b=new THREE.Vector3(),c=new THREE.Vector3(),cr=new THREE.Vector3(),ct=new THREE.Vector3();
+  const arr=new Float32Array(tris.length*9);
+  tris.forEach((t,i)=>{
+    a.fromArray(pos,t*9);b.fromArray(pos,t*9+3);c.fromArray(pos,t*9+6);
+    const ar=cr.crossVectors(b.clone().sub(a),c.clone().sub(a)).length()/2;
+    ct.copy(a).add(b).add(c).divideScalar(3);cen.addScaledVector(ct,ar);area+=ar;
+    for(let k=0;k<9;k++)arr[i*9+k]=pos[t*9+k];
+  });
+  cen.divideScalar(area||1);
+  return{n:seedN,c:cen,area,arr,count:tris.length};
+}
+
+let angObjs=[];
+function clearLine(){[lineObj,...angObjs].forEach(o=>o&&scene.remove(o));lineObj=null;angObjs=[]}
+function clearAll(){
+  overlays.forEach(o=>{scene.remove(o);o.geometry.dispose()});overlays=[];sel=[];clearLine();
+  $('ia').textContent=$('ib').textContent='—';$('dist').textContent='—';$('ang').textContent='—';
+  $('ex').textContent='Selecciona dos caras planas (unidades del archivo, normalmente mm).';
+}
+const fmt=x=>x.toFixed(3).replace(/\.?0+$/,'');
+
+function pick(seed){
+  if(sel.length===2)clearAll();
+  const f=face(seed);const i=sel.length;sel.push(f);
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(f.arr,3));
+  const o=new THREE.Mesh(g,new THREE.MeshBasicMaterial({color:COL[i],side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));
+  scene.add(o);overlays.push(o);
+  $(i?'ib':'ia').textContent='área '+fmt(f.area)+' · '+f.count+' tri';
+  if(i===1)measure();
+  else $('ex').textContent='Ahora haz clic en la segunda cara.';
+}
+
+function measure(){
+  const [A,B]=sel;const dot=A.n.dot(B.n);const diff=B.c.clone().sub(A.c);
+  let p1=A.c.clone(),p2=B.c.clone(),txt;
+  const th=Math.acos(Math.max(-1,Math.min(1,dot)))*180/Math.PI;
+  $('ang').textContent=fmt(th)+'° (suplementario '+fmt(180-th)+'°)';
+  if(Math.abs(dot)>0.9995){
+    const dist=Math.abs(A.n.dot(diff));
+    p2=B.c.clone();p1=B.c.clone().addScaledVector(A.n,-A.n.dot(B.c.clone().sub(A.c)));
+    $('dist').textContent=fmt(dist)+' mm';
+    txt='Caras paralelas: distancia perpendicular. Entre centros: '+fmt(diff.length());
+  }else{
+    const ang=Math.acos(Math.min(1,Math.abs(dot)))*180/Math.PI;
+    $('dist').textContent=fmt(diff.length())+' mm';
+    txt='Caras no paralelas: distancia entre centros. Ángulo entre planos: '+fmt(ang)+'°. Distancia del centro B al plano A: '+fmt(Math.abs(A.n.dot(diff)));
+  }
+  $('ex').textContent=txt;
+  clearLine();
+  const lg=new THREE.BufferGeometry().setFromPoints([p1,p2]);
+  lineObj=new THREE.Line(lg,new THREE.LineBasicMaterial({color:0xe5322d,depthTest:false}));
+  lineObj.renderOrder=10;scene.add(lineObj);
+  if(Math.abs(dot)<=0.9995)drawAngle(A,B);
+}
+
+function drawAngle(A,B){
+  const d=new THREE.Vector3().crossVectors(A.n,B.n);const l2=d.lengthSq();if(l2<1e-8)return;
+  const dA=A.n.dot(A.c),dB=B.n.dot(B.c);
+  const P=new THREE.Vector3().addScaledVector(new THREE.Vector3().crossVectors(B.n,d),dA)
+    .addScaledVector(new THREE.Vector3().crossVectors(d,A.n),dB).divideScalar(l2);
+  const dh=d.clone().normalize();
+  const mid=A.c.clone().add(B.c).multiplyScalar(.5);
+  P.addScaledVector(dh,mid.clone().sub(P).dot(dh));
+  const perp=v=>{const q=v.clone().sub(P);return q.addScaledVector(dh,-q.dot(dh))};
+  const a=perp(A.c),b=perp(B.c);const ra=a.length(),rb=b.length();
+  if(Math.min(ra,rb)<1e-6)return;
+  a.normalize();b.normalize();
+  const ang=Math.acos(Math.max(-1,Math.min(1,a.dot(b))));
+  const w=b.clone().addScaledVector(a,-a.dot(b));if(w.lengthSq()<1e-10)return;w.normalize();
+  const r=Math.min(ra,rb)*0.5;
+  const at=f=>P.clone().addScaledVector(a,Math.cos(f)*r).addScaledVector(w,Math.sin(f)*r);
+  const pts=[];for(let i=0;i<=40;i++)pts.push(at(ang*i/40));
+  const mk=p=>{const o=new THREE.Line(new THREE.BufferGeometry().setFromPoints(p),new THREE.LineBasicMaterial({color:0x22a559,depthTest:false}));o.renderOrder=11;scene.add(o);angObjs.push(o)};
+  mk(pts);
+  mk([P,P.clone().addScaledVector(a,r*1.25)]);
+  mk([P,P.clone().addScaledVector(b,r*1.25)]);
+  const cv=document.createElement('canvas');cv.width=256;cv.height=96;const x=cv.getContext('2d');
+  x.fillStyle='#22a559';x.beginPath();x.roundRect?x.roundRect(4,4,248,88,18):x.rect(4,4,248,88);x.fill();
+  x.fillStyle='#fff';x.font='bold 52px system-ui,sans-serif';x.textAlign='center';x.textBaseline='middle';
+  x.fillText(fmt(ang*180/Math.PI)+'°',128,50);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),depthTest:false}));
+  sp.scale.set(r*0.9,r*0.34,1);sp.renderOrder=12;
+  sp.position.copy(at(ang/2)).sub(P).multiplyScalar(1.5).add(P);
+  scene.add(sp);angObjs.push(sp);
+}
+
+// clic (sin arrastre) para seleccionar
+const ray=new THREE.Raycaster();let down=null;
+canvas.addEventListener('pointerdown',e=>down=[e.clientX,e.clientY]);
+canvas.addEventListener('pointerup',e=>{
+  if(!down||!mesh)return;
+  if(Math.hypot(e.clientX-down[0],e.clientY-down[1])>4)return;
+  const r=canvas.getBoundingClientRect();
+  ray.setFromCamera({x:((e.clientX-r.left)/r.width)*2-1,y:-((e.clientY-r.top)/r.height)*2+1},camera);
+  const h=ray.intersectObject(mesh)[0];if(h)pick(h.faceIndex);
+});
+
+$('f').addEventListener('change',e=>{const f=e.target.files[0];if(f)f.arrayBuffer().then(load)});
+$('clr').onclick=clearAll;
+$('demo').onclick=()=>{
+  const g=new THREE.BoxGeometry(40,20,10).toNonIndexed();
+  load(g.attributes.position.array.slice().buffer.byteLength?buildBin(g):null);
+};
+function buildBin(g){
+  const p=g.attributes.position.array;const n=p.length/9;
+  const buf=new ArrayBuffer(84+n*50);const dv=new DataView(buf);dv.setUint32(80,n,true);
+  for(let i=0;i<n;i++){let o=84+i*50+12;for(let k=0;k<9;k++,o+=4)dv.setFloat32(o,p[i*9+k],true)}
+  return buf;
+}
+addEventListener('dragover',e=>e.preventDefault());
+addEventListener('drop',e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)f.arrayBuffer().then(load)});
+</script>
+</body>
+</html>
